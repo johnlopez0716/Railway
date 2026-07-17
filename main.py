@@ -138,7 +138,8 @@ async def judge_importance(subject: str, sender: str, snippet: str) -> dict:
                 "content-type": "application/json",
             },
         )
-        resp.raise_for_status()
+        if resp.status_code >= 300:
+            raise RuntimeError(f"Anthropic API error {resp.status_code}: {resp.text}")
         text = resp.json()["content"][0]["text"]
         text = text.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
         try:
