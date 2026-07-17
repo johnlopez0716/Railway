@@ -131,7 +131,7 @@ async def judge_importance(subject: str, sender: str, snippet: str) -> dict:
     async with httpx.AsyncClient(timeout=30) as client:
         resp = await client.post(
             "https://api.anthropic.com/v1/messages",
-            json={"model": "claude-sonnet-4-6", "max_tokens": 500, "messages": [{"role": "user", "content": prompt}]},
+            json={"model": "claude-sonnet-5", "max_tokens": 500, "messages": [{"role": "user", "content": prompt}]},
             headers={
                 "x-api-key": ANTHROPIC_API_KEY,
                 "anthropic-version": "2023-06-01",
