@@ -1,56 +1,89 @@
-# Enchant Calendar Poller
+# Enchant Gmail Poller
 
-Replaces the "Calendar Event Pulling" n8n workflow. Every 15 minutes, checks
-for anything created or changed on the calendar since the last check — new
-events get the same AI-importance judgment n8n did (and a task if flagged
-important); events that already exist just get their fields refreshed.
+Replaces the "Enchant Emails Workflows" n8n workflow. Polls all 4 inboxes
+hourly (same cadence as n8n), runs the same AI-importance triage, writes to
+the same Supabase tables with the same account_email/category tagging.
 
-## Reuses the same Google OAuth setup as the Gmail poller
+## Step 1 — One-time Google Cloud setup (covers all 4 accounts)
 
-If you already did the `get_refresh_token.py` step for the Gmail poller, you
-can reuse the SAME Google Cloud project and OAuth client — you just need one
-more refresh token, this time for the Calendar scope instead of Gmail's.
+1. Go to console.cloud.google.com, create a project (or use an existing one).
+2. APIs & Services -> Library -> enable "Gmail API".
+3. APIs & Services -> Credentials -> Create Credentials -> OAuth client ID.
+   - Application type: Desktop app
+   - Download the JSON, save as `credentials.json` next to `get_refresh_token.py`.
+4. APIs & Services -> OAuth consent screen -> add all 4 Gmail addresses as
+   "test users" (required while the app isn't verified by Google).
 
-1. In `get_refresh_token.py` (from the Gmail poller folder), change this line:
-   ```python
-   SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
-   ```
-   to:
-   ```python
-   SCOPES = ["https://www.googleapis.com/auth/calendar"]
-   ```
-2. Run it, log into `adam@adamprather.com` (the calendar account), copy the
-   printed refresh token.
+## Step 2 — Get a refresh token for each of the 4 inboxes
 
-## Run the Supabase migration (if not already done)
+On your own computer (not Railway):
 
-This reuses the same `sync_state` table from the Gmail poller migration —
-if you already ran that one, nothing new to do here.
+```bash
+pip install google-auth-oauthlib
+python get_refresh_token.py
+```
 
-## Deploy
+This opens a browser. Log into the FIRST Gmail account, approve access, and
+the script prints a refresh token. Copy it somewhere safe.
 
-Same GitHub-upload-then-Railway-connect pattern as before.
+**Repeat 3 more times** — once per remaining inbox. Use an incognito/private
+browser window each time so it doesn't reuse your last login. You'll end up
+with 4 refresh tokens total.
 
-## Environment variables
+## Step 3 — Run the Supabase migration
+
+In Supabase's SQL editor, run `supabase_migration.sql` — adds the
+`sync_state` table this service uses to track "checked since" per inbox.
+
+## Step 4 — Deploy (same GitHub + Railway pattern as before)
+
+1. Create a new GitHub repo (e.g. `enchant-gmail`), upload these files.
+2. In Railway, new service -> GitHub Repository -> pick that repo.
+
+## Step 5 — Set environment variables in Railway
 
 ```
 SUPABASE_URL=...
 SUPABASE_SERVICE_KEY=...
 ANTHROPIC_API_KEY=...
-GOOGLE_CLIENT_ID=...
-GOOGLE_CLIENT_SECRET=...
-GOOGLE_CALENDAR_REFRESH_TOKEN=...     (the new one, calendar scope)
-CALENDAR_ID=adam@adamprather.com
+GOOGLE_CLIENT_ID=...          (from the OAuth client you created)
+GOOGLE_CLIENT_SECRET=...      (from the same OAuth client)
+
+GMAIL_ACCOUNT_1_EMAIL=adam.prather@enchantaz.com
+GMAIL_ACCOUNT_1_CATEGORY=executive
+GMAIL_ACCOUNT_1_REFRESH_TOKEN=...
+
+GMAIL_ACCOUNT_2_EMAIL=transactions@enchantaz.com
+GMAIL_ACCOUNT_2_CATEGORY=transactions
+GMAIL_ACCOUNT_2_REFRESH_TOKEN=...
+
+GMAIL_ACCOUNT_3_EMAIL=adam@adamprather.com
+GMAIL_ACCOUNT_3_CATEGORY=executive
+GMAIL_ACCOUNT_3_REFRESH_TOKEN=...
+
+GMAIL_ACCOUNT_4_EMAIL=adam.prather@gmail.com
+GMAIL_ACCOUNT_4_CATEGORY=executive
+GMAIL_ACCOUNT_4_REFRESH_TOKEN=...
 ```
 
-## Test
+(Category assignments match what's already tagged in the existing n8n
+workflow — adjust if you want different groupings.)
 
-- `curl https://your-domain/health`
-- `curl -X POST https://your-domain/run-now` — checks for new/updated events immediately
-- `curl -X POST https://your-domain/backfill` — pulls the full current week, same as the manual Backfill Trigger in n8n
+## Step 6 — Test
 
-## What's intentionally different from the n8n version
+- `curl https://your-domain/health` should list all 4 account emails.
+- `curl -X POST https://your-domain/run-now` triggers an immediate check of
+  all 4 inboxes, without waiting for the hourly schedule — use this to
+  verify it's working end-to-end before trusting the schedule.
+- Check the `emails` and `tasks` tables in Supabase for new rows after
+  running `/run-now`.
 
-n8n used two separate triggers (hourly for new, 15-min for updates). This
-collapses both into one 15-minute check that branches on whether the event
-already exists in Supabase — functionally equivalent, one fewer moving part.
+## What this does NOT do yet
+
+- Doesn't handle Gmail's `historyId`-based incremental sync (uses simple
+  timestamp tracking instead) — fine at this volume, worth upgrading later
+  if you want zero chance of ever double-processing a message during a
+  crash/restart.
+- Doesn't replicate the Email Reply Assistant — that's a separate, later piece.
+- n8n's 4-inbox workflow stays running until you've confirmed this one
+  works reliably — don't turn it off yet.
